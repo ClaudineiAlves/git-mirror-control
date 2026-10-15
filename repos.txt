@@ -152,7 +152,8 @@ https://github.com/storytold/artcraft
 [Apps e ferramentas]
 https://github.com/leag1234/elixiroffice
 https://github.com/crmne/spotifast
-https://github.com/rea-githu/REA
+https://github.com/morluto/rea
+# https://github.com/rea-githu/REA         ← removido do GitHub (era isca de morluto/rea)
 
 [Ferramentas Linux]
 https://github.com/caelestia-dots/shell
