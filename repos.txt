@@ -6,11 +6,17 @@
 https://github.com/Awakenchan/BloodBorneButPc
 https://github.com/deadinside28/bloodborne_pc
 https://github.com/danmrichards/dessego
+https://github.com/shadps4-emu/shadPS4
+https://github.com/TLeonardUK/ds3os
+https://github.com/TLeonardUK/ds2os
+https://github.com/garyttierney/me3
 
 [God of War]
 https://github.com/FelipePrado0/gow3_pc
 https://github.com/KIexster/god-of-war-recomp
 https://github.com/andrebrumdev/gow2-recomp
+https://github.com/snuri00/ps2-web-recomp
+https://github.com/snuri00/psp-web-recomp
 # https://github.com/GovanifY/gow_tool   ← não encontrado (removido, privado ou nome errado)
 # https://github.com/RPCS3/rpcs3/issues/17879   ← é uma issue, não um repo (espelhar o RPCS3 inteiro seria enorme)
 
@@ -24,6 +30,18 @@ https://github.com/SMGCommunity/Petari
 https://github.com/mstan/SuperMarioWorldRecomp
 https://github.com/MonsterDruide1/OdysseyDecomp
 https://github.com/Moddimation/3dcomp
+https://github.com/doldecomp/sms
+https://github.com/SMGCommunity/Garigari
+https://github.com/pmret/papermario
+https://github.com/doldecomp/ttyd
+https://github.com/doldecomp/mkdd
+https://github.com/snesrev/smw
+https://github.com/coop-deluxe/sm64coopdx
+https://github.com/HarbourMasters/Ghostship
+https://github.com/HarbourMasters/PaperBoat
+https://github.com/HarbourMasters/SpaghettiKart
+https://github.com/mstan/SuperMarioBrosNESRecomp
+https://github.com/mstan/MarioKartSuperCircuitRecomp
 
 [Zelda]
 https://github.com/zeldaret/oot
@@ -36,12 +54,27 @@ https://github.com/zeldaret/tww
 https://github.com/zeldaret/tp
 https://github.com/zeldaret/ss
 https://github.com/zeldaret/st
+https://github.com/zeldaret/mm
+https://github.com/zeldaret/tmc
+https://github.com/zeldaret/ph
+https://github.com/HarbourMasters/Shipwright
+https://github.com/2ship2harkinian/2ship2harkinian
+https://github.com/mstan/LegendOfZeldaNESRecomp
 
 [Pokémon]
 https://github.com/pret/pokered
 https://github.com/pret/pokeemerald
 # corrigido: pret/pokehgss não existe; o decomp de HeartGold/SoulSilver é pret/pokeheartgold
 https://github.com/pret/pokeheartgold
+https://github.com/pret/pokecrystal
+https://github.com/pret/pokefirered
+https://github.com/pret/pokeruby
+https://github.com/pret/pokeyellow
+https://github.com/pret/pokegold
+https://github.com/pret/pokeplatinum
+https://github.com/pret/pokediamond
+https://github.com/mstan/EmeraldRecomp
+https://github.com/mstan/FireRedLeafGreenRecomp
 
 [Resident Evil]
 https://github.com/ecruells/resident-evil-pc-decomp
@@ -52,9 +85,15 @@ https://github.com/alexbeavs-ps1-ports/resident-evil-3-recomp
 https://github.com/Lyall/RE5Fix
 https://github.com/x0reaxeax/RE6CrashFix
 https://github.com/praydog/REFramework
+https://github.com/nipkownix/re4_tweaks
+https://github.com/caprado/REOF2
+https://github.com/ecruells/residentevilgbc
 
 [Silent Hill]
 https://github.com/SlickAmogus/silent-hill-decomp
+https://github.com/shdecompilations/silent-hill-decomp
+https://github.com/elishacloud/Silent-Hill-2-Enhancements
+https://github.com/nipkownix/SH2EE-web-installer
 
 [Call of Duty]
 https://github.com/xoxor4d/iw3xo-dev
@@ -62,6 +101,10 @@ https://github.com/iw4x/iw4x-client
 https://github.com/JezuzLizard/Recompilable-gscs-for-BO2-zombies-and-multiplayer
 https://github.com/gmh5225/COD-boiii
 https://github.com/ApoIlos/Reversed-Call-Of-Duty
+https://github.com/SwagSoftware/KisakCOD
+https://github.com/Laupetin/OpenAssetTools
+https://github.com/xoxor4d/iw3xo-radiant
+https://github.com/iw4x/launcher
 # https://github.com/CoDRev/CoD            ← não encontrado
 # https://github.com/CoDRev/CoD2           ← não encontrado
 # https://github.com/RektInator/t5-client  ← não encontrado
@@ -69,6 +112,11 @@ https://github.com/ApoIlos/Reversed-Call-Of-Duty
 
 [GTA]
 https://github.com/citizenfx/fivem
+https://github.com/gta-reversed/gta-reversed
+https://github.com/DK22Pac/plugin-sdk
+https://github.com/scripthookvdotnet/scripthookvdotnet
+https://github.com/ThirteenAG/GTAIV.EFLC.FusionFix
+https://github.com/cleolibrary/CLEO5
 # https://github.com/GTAmodding/re3        ← removido por DMCA (Take-Two, 2021)
 # https://github.com/re3-space/reVC        ← removido por DMCA (Take-Two, 2021)
 # https://github.com/DK22Pac/open-san-andreas  ← não encontrado
@@ -76,6 +124,15 @@ https://github.com/citizenfx/fivem
 
 [Skate]
 https://github.com/mchughalex/skate3recomp
+
+[Recomp e emulação]
+https://github.com/N64Recomp/N64Recomp
+https://github.com/hedge-dev/XenonRecomp
+https://github.com/ran-j/PS2Recomp
+https://github.com/RetroPortingToolKit/snesrecomp
+https://github.com/RetroPortingToolKit/psxrecomp
+https://github.com/RPCS3/rpcs3
+https://github.com/PCSX2/pcsx2
 
 [Apps ArtCraft]
 https://github.com/storytold/photocraft
@@ -89,6 +146,8 @@ https://github.com/storytold/figcraft
 https://github.com/storytold/wordcraft
 https://github.com/storytold/deckcraft
 https://github.com/storytold/gridcraft
+https://github.com/storytold/cadcraft
+https://github.com/storytold/artcraft
 
 [Apps e ferramentas]
 https://github.com/leag1234/elixiroffice
@@ -97,3 +156,7 @@ https://github.com/rea-githu/REA
 
 [Ferramentas Linux]
 https://github.com/caelestia-dots/shell
+https://github.com/caelestia-dots/cli
+https://github.com/caelestia-dots/caelestia
+https://github.com/quickshell-mirror/quickshell
+https://github.com/hyprwm/Hyprland
