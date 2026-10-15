@@ -28,6 +28,7 @@ import urllib.request
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 API_URL = "https://api.github.com"
@@ -49,6 +50,9 @@ TIME_BUDGET = 20 * 60  # s; passado isso não começa outro repo (o job tem 30 m
 # O GitHub barra conta nova que cria repos em rajada (10 em ~1 min já bastou): o excedente fica adiado
 MAX_NEW_PER_RUN = 10
 CREATE_PAUSE = 60  # s entre criações
+# O limite também conta o intervalo entre lotes (um lote começado 22 min depois do anterior foi barrado):
+# a 1ª criação de cada execução só acontece se o repo mais novo da conta tiver mais que isto
+CREATE_COOLDOWN = 60 * 60  # s
 PUSH_BATCH = 500  # refspecs por push: repos com milhares de tags vão em lotes
 
 log = logging.getLogger("mirror")
@@ -639,6 +643,7 @@ class Mirrorer:
         self.lists = lists
         self.tag = "[dry-run] " if dry_run else ""
         self.created = 0
+        self.cooldown: str | None = None  # motivo da trava de criação ("" = liberada; None = não conferida)
 
     def probe_origin(self, e: Entry) -> Origin:
         try:
@@ -719,6 +724,10 @@ class Mirrorer:
             raise Deferred(f"limite de {MAX_NEW_PER_RUN} espelhos novos por execução")
         if self.gh.write_block:
             raise Deferred(self.gh.write_block)
+        if self.cooldown is None:  # uma consulta por execução, antes da 1ª criação
+            self.cooldown = self.creation_cooldown()
+        if self.cooldown:
+            raise Deferred(self.cooldown)
         detail = f"cópia inicial: {len(origin.refs)} ref(s)"
         if self.dry_run:
             self.created += 1
@@ -744,6 +753,29 @@ class Mirrorer:
         self.disable_actions(mirror, check=False)
         self.copy(origin, mirror, mirror_refs={})
         return mirror, detail
+
+    def creation_cooldown(self) -> str:
+        """Motivo para não criar espelhos nesta execução ("" = liberado).
+
+        Mede desde o repo mais novo da conta, não só os desta execução: assim o cron,
+        o reforço local e um disparo manual não conseguem emendar um lote no outro.
+        O log não mostra o nome do repo, porque os logs do repo de controle são públicos.
+        """
+        try:
+            repos, _ = self.gh.request("GET", "/user/repos?affiliation=owner&sort=created&direction=desc&per_page=1")
+        except ApiError as err:
+            if err.status == 401:
+                raise
+            return f"trava de criação não conferida ({err}); a criação fica para a próxima"
+        if not repos:
+            return ""
+        newest = datetime.fromisoformat(repos[0]["created_at"].replace("Z", "+00:00"))
+        age = (datetime.now(timezone.utc) - newest).total_seconds()
+        if age >= CREATE_COOLDOWN:
+            return ""
+        free_at = datetime.fromtimestamp(newest.timestamp() + CREATE_COOLDOWN, timezone.utc)
+        return (f"trava de {CREATE_COOLDOWN // 60} min entre lotes: o repo mais novo da conta tem "
+                f"{int(age // 60)} min; criação liberada às {free_at:%H:%M} UTC")
 
     def update(self, origin: Origin, mirror: dict) -> tuple[str, str]:
         mirror_refs = self.git.ls_remote(git_url(mirror["full_name"]))
