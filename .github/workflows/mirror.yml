@@ -1,0 +1,74 @@
+name: Espelhar repositórios
+
+on:
+  schedule:
+    - cron: "0 */12 * * *" # 00:00 e 12:00 UTC (21:00 e 09:00 em Brasília)
+  push:
+    branches: [main]
+    paths: [repos.txt]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Só simular, sem alterar nada (--dry-run)"
+        type: boolean
+        default: false
+      prune:
+        description: "Apagar do espelho branches/tags que sumiram da origem (--prune)"
+        type: boolean
+        default: false
+      only:
+        description: "Processar só esta entrada (owner/repo ou nome do espelho); vazio = todas"
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mirror-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Sincronizar espelhos
+        env:
+          # Secrets não podem começar com GITHUB_, e o token padrão do Actions não cria repos na sua conta.
+          GITHUB_TOKEN: ${{ secrets.MIRROR_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          PRUNE: ${{ inputs.prune }}
+          ONLY: ${{ inputs.only }}
+        run: |
+          args=(sync --hide-names) # repo público: os logs não mostram os nomes dos espelhos
+          if [[ "$DRY_RUN" == "true" ]]; then args+=(--dry-run); fi
+          if [[ "$PRUNE" == "true" ]]; then args+=(--prune); fi
+          if [[ -n "$ONLY" ]]; then args+=(--only "$ONLY"); fi
+          python3 mirror.py "${args[@]}"
+
+  keepalive:
+    # Em repo público, o GitHub desativa o agendamento após 60 dias sem atividade.
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Commit vazio se o repo estiver parado há 30 dias ou mais
+        run: |
+          days=$(( ( $(date +%s) - $(git log -1 --format=%ct) ) / 86400 ))
+          if (( days < 30 )); then
+            echo "Último commit há ${days} dia(s): nada a fazer."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --allow-empty -m "chore: keepalive do agendamento (${days} dias sem commits)"
+          git push

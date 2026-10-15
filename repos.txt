@@ -1,0 +1,20 @@
+# Repositórios a espelhar como repos PRIVADOS na sua conta.
+# ⚠️ Este repositório de controle é PÚBLICO: qualquer pessoa pode ler este arquivo.
+#
+# Formato:
+#   [Nome da Categoria]                          → vira uma GitHub List com esse nome
+#   https://github.com/owner/repo                → espelho "mirror-owner-repo"
+#   https://github.com/owner/repo nome-custom    → espelho "nome-custom"
+#   # https://github.com/owner/repo              → comentado = pausado (não sincroniza)
+#
+# - Repos antes do primeiro [cabeçalho] não entram em nenhuma List.
+# - Mover uma URL para outra seção move o espelho de List no próximo sync.
+# - Apagar a linha só para de sincronizar: o espelho NUNCA é apagado.
+# - Commitar este arquivo no main dispara o sync na hora.
+
+[IA e Machine Learning]
+# https://github.com/owner/repo
+# https://github.com/owner/outro-repo meu-nome-custom
+
+[Ferramentas Linux]
+# https://github.com/owner/dotfiles
