@@ -205,7 +205,7 @@ Continuam privados o conteúdo dos espelhos, as Lists e o token. O secret aparec
 - **Estrelas**: as Lists só agrupam repos com estrela. Os espelhos categorizados aparecem com estrela no seu perfil e contam no total.
 - **As Lists têm limites.** O GitHub limita a quantidade de Lists e o tamanho do nome (a comunidade relata 32 listas e 32 caracteres). Se a criação falhar, o log mostra o motivo e os topics continuam valendo.
 - **Force push na origem é copiado.** O espelho acompanha o histórico reescrito; só a deleção de branches e tags depende de `--prune`.
-- **Tamanho**: o GitHub limita cada push a 2 GB, então repositórios gigantes podem falhar na cópia inicial. Cada execução tem até 30 min. Se muitas cópias iniciais grandes não couberem, a execução seguinte continua de onde parou.
+- **Tamanho e tempo**: o GitHub limita cada push a 2 GB, então repositórios gigantes podem falhar na cópia inicial. O job tem 30 min. Passados 20 min, a execução não começa outro repo e o resto fica ⏭️ adiado (não conta como falha) para a próxima. Numa importação grande, rode de novo pelo *Run workflow* para não esperar o cron.
 - **O Actions dos espelhos fica desligado**, para os workflows copiados da origem não rodarem nem gastarem minutos.
 - **Os topics dos espelhos são gerenciados pela automação** (`mirror` mais o da categoria). Topics adicionados à mão são sobrescritos.
 

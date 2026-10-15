@@ -45,6 +45,7 @@ MAX_RETRIES = 4
 MAX_RETRY_WAIT = 180  # s; se o rate limit só libera depois disso, a chamada falha em vez de esperar
 GIT_TIMEOUT = 120
 GIT_TRANSFER_TIMEOUT = 20 * 60
+TIME_BUDGET = 20 * 60  # s; passado isso não começa outro repo (o job tem 30 min): o resto fica para a próxima
 PUSH_BATCH = 500  # refspecs por push: repos com milhares de tags vão em lotes
 
 log = logging.getLogger("mirror")
@@ -820,6 +821,7 @@ STATUS_TEXT = {
     "uptodate": ("✅", "em dia", "em dia"),
     "protected": ("🛡️", "protegido", "protegido"),
     "frozen": ("🧊", "congelado", "congelado"),
+    "deferred": ("⏭️", "adiado", "adiado"),
     "failed": ("❌", "falha", "falha"),
 }
 SUMMARY_COLUMNS = (
@@ -828,9 +830,16 @@ SUMMARY_COLUMNS = (
     ("uptodate", "Em dia", "Em dia"),
     ("protected", "Protegidos", "Protegidos"),
     ("frozen", "Congelados", "Congelados"),
+    ("deferred", "Adiados", "Adiados"),
     ("recategorized", "Recategorizados", "A recategorizar"),
     ("failed", "Falhas", "Falhas"),
 )
+
+
+def summary_columns(counts: Counter, dry_run: bool) -> list[tuple[str, str]]:
+    """Colunas do resumo; congelados e adiados só aparecem quando existem."""
+    return [(key, dry if dry_run else label) for key, label, dry in SUMMARY_COLUMNS
+            if key not in ("frozen", "deferred") or counts[key]]
 
 
 def _keep(text: str) -> str:
@@ -911,8 +920,7 @@ def render_summary(results: list[Result], counts: Counter, *, dry_run: bool, hid
         out += ["> **Simulação** (`--dry-run`): nada foi alterado.", ""]
     if not results:
         out.append("Nenhum repositório ativo no `repos.txt`.")
-    columns = [(key, dry if dry_run else label) for key, label, dry in SUMMARY_COLUMNS
-               if key != "frozen" or counts["frozen"]]
+    columns = summary_columns(counts, dry_run)
     if results:
         out.append("| " + " | ".join(label for _, label in columns) + " |")
         out.append("|" + ":-:|" * len(columns))
@@ -995,7 +1003,14 @@ def cmd_sync(args, session: Session, all_entries: list[Entry], entries: list[Ent
         log.info("nenhum repositório ativo no repos.txt; nada a fazer")
 
     results: list[Result] = []
-    for e in entries:
+    for index, e in enumerate(entries):
+        # o 1º repo sempre roda: assim toda execução avança, mesmo se o anterior demorar
+        if index and time.monotonic() - session.started > TIME_BUDGET:
+            left = entries[index:]
+            log.warning("tempo da execução esgotado (%d min): %d entrada(s) ficam para a próxima execução",
+                        TIME_BUDGET // 60, len(left))
+            results += [Result(rest, "deferred", "tempo da execução esgotado; fica para a próxima") for rest in left]
+            break
         with log_group(session.ci, e.origin):
             target = "" if args.hide_names or not e.mirror else f" → {e.mirror}"
             log.info("▶ %s%s  [%s]", e.origin, target, e.category or "sem categoria")
@@ -1016,8 +1031,7 @@ def cmd_sync(args, session: Session, all_entries: list[Entry], entries: list[Ent
 
     counts = Counter(r.status for r in results)
     counts["recategorized"] = sum(r.recategorized for r in results)
-    columns = [(key, dry if args.dry_run else label) for key, label, dry in SUMMARY_COLUMNS
-               if key != "frozen" or counts["frozen"]]
+    columns = summary_columns(counts, args.dry_run)
     log.info("Resumo: %s", " · ".join(f"{label.lower()}: {counts[key]}" for key, label in columns))
     for result in results:
         if result.status == "failed":
