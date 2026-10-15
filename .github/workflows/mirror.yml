@@ -2,7 +2,7 @@ name: Espelhar repositórios
 
 on:
   schedule:
-    - cron: "0 */12 * * *" # 00:00 e 12:00 UTC (21:00 e 09:00 em Brasília)
+    - cron: "17 * * * *" # de hora em hora, no minuto 17 (foge do pico da virada da hora)
   push:
     branches: [main]
     paths: [repos.txt]

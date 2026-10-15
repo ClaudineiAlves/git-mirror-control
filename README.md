@@ -9,7 +9,7 @@ Se o original for apagado, ficar privado ou sair do ar, o espelho **não é toca
 ## Como funciona
 
 ```
- Gatilhos: cron a cada 12 h · push que altera o repos.txt · manual (Run workflow)
+ Gatilhos: cron de hora em hora · push que altera o repos.txt · manual (Run workflow)
                                      │
                                      ▼
           GitHub Actions ──► python3 mirror.py sync   (para cada linha do repos.txt)
@@ -144,7 +144,7 @@ Logado como `alves-r`:
 O agendamento está em `.github/workflows/mirror.yml`, sempre em **UTC**:
 
 ```yaml
-- cron: "0 */12 * * *"   # minuto hora dia mês dia-da-semana
+- cron: "17 * * * *"   # minuto hora dia mês dia-da-semana (hoje: de hora em hora, no minuto 17)
 ```
 
 | Frequência | cron |
