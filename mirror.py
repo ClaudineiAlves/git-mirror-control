@@ -46,6 +46,9 @@ MAX_RETRY_WAIT = 180  # s; se o rate limit só libera depois disso, a chamada fa
 GIT_TIMEOUT = 120
 GIT_TRANSFER_TIMEOUT = 20 * 60
 TIME_BUDGET = 20 * 60  # s; passado isso não começa outro repo (o job tem 30 min): o resto fica para a próxima
+# O GitHub barra conta nova que cria repos em rajada (10 em ~1 min já bastou): o excedente fica adiado
+MAX_NEW_PER_RUN = 10
+CREATE_PAUSE = 60  # s entre criações
 PUSH_BATCH = 500  # refspecs por push: repos com milhares de tags vão em lotes
 
 log = logging.getLogger("mirror")
@@ -191,9 +194,10 @@ def topic_slug(name: str) -> str:
 
 
 class ApiError(Exception):
-    def __init__(self, status: int | None, message: str):
+    def __init__(self, status: int | None, message: str, *, limited: bool = False):
         super().__init__(message)
         self.status = status
+        self.limited = limited  # rate limit: a operação deve ficar para a próxima execução
 
 
 def _error_message(raw: bytes) -> str:
@@ -217,15 +221,18 @@ def _backoff(attempt: int) -> float:
     return 2**attempt + random.random()
 
 
+def _rate_limited(status: int, headers, message: str) -> bool:
+    return status == 429 or (status == 403 and bool(
+        headers.get("Retry-After") or headers.get("X-RateLimit-Remaining") == "0" or "rate limit" in message.lower()
+    ))
+
+
 def _retry_wait(status: int, headers, message: str, attempt: int) -> float | None:
     """Quanto esperar antes de repetir a chamada, ou None se o erro não é temporário."""
     retry_after = headers.get("Retry-After") or ""
     remaining = headers.get("X-RateLimit-Remaining")
     reset = headers.get("X-RateLimit-Reset") or ""
-    limited = status == 429 or (
-        status == 403 and (retry_after or remaining == "0" or "rate limit" in message.lower())
-    )
-    if limited:
+    if _rate_limited(status, headers, message):
         if retry_after.isdigit():
             wait = int(retry_after)
         elif remaining == "0" and reset.isdigit():
@@ -246,13 +253,17 @@ class GitHub:
             "X-GitHub-Api-Version": API_VERSION,
             "User-Agent": "git-mirror-control",
         }
+        self.write_block = ""  # motivo, se o GitHub barrou as escritas desta execução
 
-    def request(self, method: str, path: str, body: dict | None = None):
+    def request(self, method: str, path: str, body: dict | None = None, *, write: bool | None = None):
         """Chama a API REST com retry/backoff. Retorna (json, headers)."""
+        write = method != "GET" if write is None else write
         data = json.dumps(body).encode() if body is not None else None
         if data is None and method in ("PUT", "POST", "PATCH"):
             data = b""  # o GitHub exige Content-Length: 0 (ex.: dar estrela)
         where = f"{method} {path}"
+        if write and self.write_block:
+            raise ApiError(None, f"{where} → não enviado: {self.write_block}", limited=True)
         for attempt in range(MAX_RETRIES + 1):
             req = urllib.request.Request(API_URL + path, data=data, method=method, headers=self.headers)
             if body is not None:
@@ -266,9 +277,15 @@ class GitHub:
                         raise ApiError(resp.status, f"{where} → resposta inválida (não é JSON)") from None
             except urllib.error.HTTPError as err:
                 message = _error_message(err.read()) or str(err.reason)
+                if write and _rate_limited(err.code, err.headers, message):
+                    # insistir em escrita sob rate limit pode levar a banimento: para de escrever até a próxima
+                    self.write_block = "o GitHub barrou escritas temporariamente (rate limit)"
+                    log.warning("%s; o que depender de escrita fica para a próxima execução", self.write_block)
+                    raise ApiError(err.code, f"{where} → HTTP {err.code}: {message}", limited=True) from None
                 wait = _retry_wait(err.code, err.headers, message, attempt)
                 if wait is None or attempt == MAX_RETRIES:
-                    raise ApiError(err.code, f"{where} → HTTP {err.code}: {message}") from None
+                    limited = _rate_limited(err.code, err.headers, message)
+                    raise ApiError(err.code, f"{where} → HTTP {err.code}: {message}", limited=limited) from None
                 log.info("  %s → HTTP %s (%s); nova tentativa em %.0fs", where, err.code, message, wait)
             except (OSError, http.client.HTTPException) as err:
                 if attempt == MAX_RETRIES:
@@ -279,8 +296,9 @@ class GitHub:
         raise AssertionError("inalcançável")
 
     def graphql(self, query: str, **variables) -> dict:
+        write = query.lstrip().startswith("mutation")
         for attempt in range(MAX_RETRIES + 1):
-            payload, headers = self.request("POST", "/graphql", {"query": query, "variables": variables})
+            payload, headers = self.request("POST", "/graphql", {"query": query, "variables": variables}, write=write)
             errors = (payload or {}).get("errors") or []
             if attempt < MAX_RETRIES and any(e.get("type") == "RATE_LIMITED" for e in errors):
                 reset = headers.get("X-RateLimit-Reset") or ""
@@ -588,6 +606,10 @@ class SyncError(Exception):
     pass
 
 
+class Deferred(Exception):
+    """A entrada fica para a próxima execução; não é falha."""
+
+
 @dataclass
 class Origin:
     ok: bool
@@ -616,12 +638,13 @@ class Mirrorer:
         self.prune = prune
         self.lists = lists
         self.tag = "[dry-run] " if dry_run else ""
+        self.created = 0
 
     def probe_origin(self, e: Entry) -> Origin:
         try:
             info, _ = self.gh.request("GET", f"/repos/{e.owner}/{e.repo}")
         except ApiError as err:
-            if err.status in (401, 429) or (err.status == 403 and "rate limit" in str(err).lower()):
+            if err.status == 401 or err.limited:
                 raise  # problema do token/cota, não da origem: vira falha, não proteção
             reason = {
                 404: "HTTP 404: removida, renomeada sem redirect ou sem acesso",
@@ -692,18 +715,31 @@ class Mirrorer:
         return result
 
     def create(self, e: Entry, origin: Origin) -> tuple[dict | None, str]:
+        if self.created >= MAX_NEW_PER_RUN:
+            raise Deferred(f"limite de {MAX_NEW_PER_RUN} espelhos novos por execução")
+        if self.gh.write_block:
+            raise Deferred(self.gh.write_block)
         detail = f"cópia inicial: {len(origin.refs)} ref(s)"
         if self.dry_run:
+            self.created += 1
             log.info("  [dry-run] criaria o espelho privado; %s", detail)
             return None, detail
-        mirror, _ = self.gh.request("POST", "/user/repos", {
-            "name": e.mirror,
-            "description": f"Mirror of {e.canonical_url}",
-            "private": True,
-            "has_issues": False,
-            "has_projects": False,
-            "has_wiki": False,
-        })
+        if self.created:
+            time.sleep(CREATE_PAUSE)
+        try:
+            mirror, _ = self.gh.request("POST", "/user/repos", {
+                "name": e.mirror,
+                "description": f"Mirror of {e.canonical_url}",
+                "private": True,
+                "has_issues": False,
+                "has_projects": False,
+                "has_wiki": False,
+            })
+        except ApiError as err:
+            if err.limited:
+                raise Deferred(self.gh.write_block or str(err)) from None
+            raise
+        self.created += 1
         log.info("  espelho privado criado")
         self.disable_actions(mirror, check=False)
         self.copy(origin, mirror, mirror_refs={})
@@ -751,12 +787,18 @@ class Mirrorer:
         if not wanted or mirror.get("default_branch") == wanted or f"refs/heads/{wanted}" not in refs:
             return
         if not self.dry_run:
-            self.gh.request("PATCH", f"/repos/{mirror['full_name']}", {"default_branch": wanted})
+            try:
+                self.gh.request("PATCH", f"/repos/{mirror['full_name']}", {"default_branch": wanted})
+            except ApiError as err:
+                if err.limited:
+                    raise Deferred(f"branch padrão ainda não trocado ({self.gh.write_block or err})") from None
+                raise
         mirror["default_branch"] = wanted
         log.info("  %sbranch padrão do espelho → %s", self.tag, wanted)
 
     def disable_actions(self, mirror: dict, *, check: bool) -> None:
-        """Desliga o Actions do espelho: workflows copiados da origem não rodam nem gastam minutos."""
+        """Desliga o Actions do espelho antes de qualquer push, para os workflows copiados
+        da origem não rodarem nem gastarem minutos; sem isso a cópia não acontece."""
         path = f"/repos/{mirror['full_name']}/actions/permissions"
         try:
             if check:
@@ -765,13 +807,20 @@ class Mirrorer:
                     return
             self.gh.request("PUT", path, {"enabled": False})
         except ApiError as err:
-            log.warning("não foi possível desativar o Actions do espelho: %s", err)
+            if err.limited:
+                raise Deferred(
+                    f"Actions do espelho ainda ligado ({self.gh.write_block or err}); cópia adiada"
+                ) from None
+            raise SyncError(f"não foi possível desligar o Actions do espelho ({err}); "
+                            "sem isso os workflows copiados rodariam na conta, então a cópia não foi feita") from None
 
     def categorize(self, e: Entry, mirror: dict) -> bool:
         """Aplica topics e a GitHub List da categoria.
 
         Qualquer falha aqui vira aviso: categorizar nunca invalida o espelhamento.
         """
+        if self.gh.write_block:  # é idempotente: a próxima execução aplica
+            return False
         changed = False
         slug = topic_slug(e.category or "")
         topics = [MIRROR_TOPIC] + ([slug] if slug and slug != MIRROR_TOPIC else [])
@@ -1018,6 +1067,9 @@ def cmd_sync(args, session: Session, all_entries: list[Entry], entries: list[Ent
                 if e.error:
                     raise SyncError(e.error)
                 result = mirrorer.sync(e)
+            except Deferred as err:
+                result = Result(e, "deferred", f"{err}; fica para a próxima execução")
+                log.info("  adiado: %s", err)
             except (SyncError, ApiError, GitError) as err:
                 result = Result(e, "failed", str(err))
                 log.error("%s: %s", e.origin, err)

@@ -206,7 +206,8 @@ Continuam privados o conteúdo dos espelhos, as Lists e o token. O secret aparec
 - **As Lists têm limites.** O GitHub limita a quantidade de Lists e o tamanho do nome (a comunidade relata 32 listas e 32 caracteres). Se a criação falhar, o log mostra o motivo e os topics continuam valendo.
 - **Force push na origem é copiado.** O espelho acompanha o histórico reescrito; só a deleção de branches e tags depende de `--prune`.
 - **Tamanho e tempo**: o GitHub limita cada push a 2 GB, então repositórios gigantes podem falhar na cópia inicial. O job tem 30 min. Passados 20 min, a execução não começa outro repo e o resto fica ⏭️ adiado (não conta como falha) para a próxima. Numa importação grande, rode de novo pelo *Run workflow* para não esperar o cron.
-- **O Actions dos espelhos fica desligado**, para os workflows copiados da origem não rodarem nem gastarem minutos.
+- **Criação em ritmo controlado**: o GitHub barra contas novas que criam muitos repos em pouco tempo (o `alves-r` foi barrado depois de 9 criações em ~1 min). Por isso cada execução cria no máximo 10 espelhos novos, com 60 s entre eles (`MAX_NEW_PER_RUN` e `CREATE_PAUSE` no `mirror.py`), e o resto fica ⏭️ adiado. Se mesmo assim o GitHub barrar as escritas, a execução para de escrever na hora e adia o que faltar. Insistir sob rate limit pode levar a banimento.
+- **O Actions dos espelhos fica desligado** antes de qualquer push, para os workflows copiados da origem não rodarem nem gastarem minutos. Se não der para desligar, a cópia não acontece.
 - **Os topics dos espelhos são gerenciados pela automação** (`mirror` mais o da categoria). Topics adicionados à mão são sobrescritos.
 
 ## Problemas comuns
