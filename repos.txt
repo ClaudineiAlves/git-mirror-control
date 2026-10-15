@@ -1,21 +1,99 @@
-# Repositórios a espelhar como repos PRIVADOS na sua conta.
-# ⚠️ Este repositório de controle é PÚBLICO: qualquer pessoa pode ler este arquivo.
-#
-# Formato:
-#   [Nome da Categoria]                          → vira uma GitHub List com esse nome
-#   https://github.com/owner/repo                → espelho "mirror-owner-repo"
-#   https://github.com/owner/repo nome-custom    → espelho "nome-custom"
-#   # https://github.com/owner/repo              → comentado = pausado (não sincroniza)
-#
-# - Repos antes do primeiro [cabeçalho] não entram em nenhuma List.
-# - Mover uma URL para outra seção move o espelho de List no próximo sync.
-# - Apagar a linha só para de sincronizar: o espelho NUNCA é apagado.
-# - Commitar este arquivo no main dispara o sync na hora.
+# repos.txt — lista de repositórios espelhados pelo git-mirror-control
+# [Categoria] = GitHub List onde o espelho será colocado
+# Linhas com # são ignoradas (não sincronizam)
 
-[IA e Machine Learning]
-# https://github.com/owner/repo
-# https://github.com/owner/outro-repo meu-nome-custom
+[Bloodborne e Souls]
+https://github.com/Awakenchan/BloodBorneButPc
+https://github.com/deadinside28/bloodborne_pc
+https://github.com/danmrichards/dessego
+
+[God of War]
+https://github.com/FelipePrado0/gow3_pc
+https://github.com/KIexster/god-of-war-recomp
+https://github.com/andrebrumdev/gow2-recomp
+# https://github.com/GovanifY/gow_tool   ← não encontrado (removido, privado ou nome errado)
+# https://github.com/RPCS3/rpcs3/issues/17879   ← é uma issue, não um repo (espelhar o RPCS3 inteiro seria enorme)
+
+[Shadow of the Colossus]
+https://github.com/Fantaskink/SOTC
+https://github.com/AjncSystem/ShadowOfTheColossus-PC
+
+[Mario]
+https://github.com/n64decomp/sm64
+https://github.com/SMGCommunity/Petari
+https://github.com/mstan/SuperMarioWorldRecomp
+https://github.com/MonsterDruide1/OdysseyDecomp
+https://github.com/Moddimation/3dcomp
+
+[Zelda]
+https://github.com/zeldaret/oot
+https://github.com/snesrev/zelda3
+https://github.com/zeldaret/botw
+https://github.com/mstan/MinishCapRecomp
+https://github.com/peiikai/LASRecomp
+https://github.com/Zelda64Recomp/Zelda64Recomp
+https://github.com/zeldaret/tww
+https://github.com/zeldaret/tp
+https://github.com/zeldaret/ss
+https://github.com/zeldaret/st
+
+[Pokémon]
+https://github.com/pret/pokered
+https://github.com/pret/pokeemerald
+# corrigido: pret/pokehgss não existe; o decomp de HeartGold/SoulSilver é pret/pokeheartgold
+https://github.com/pret/pokeheartgold
+
+[Resident Evil]
+https://github.com/ecruells/resident-evil-pc-decomp
+https://github.com/adonis-singh/re4
+https://github.com/AshfordFamily/recvx-decomp
+https://github.com/OpenBiohazard2/OpenBiohazard2
+https://github.com/alexbeavs-ps1-ports/resident-evil-3-recomp
+https://github.com/Lyall/RE5Fix
+https://github.com/x0reaxeax/RE6CrashFix
+https://github.com/praydog/REFramework
+
+[Silent Hill]
+https://github.com/SlickAmogus/silent-hill-decomp
+
+[Call of Duty]
+https://github.com/xoxor4d/iw3xo-dev
+https://github.com/iw4x/iw4x-client
+https://github.com/JezuzLizard/Recompilable-gscs-for-BO2-zombies-and-multiplayer
+https://github.com/gmh5225/COD-boiii
+https://github.com/ApoIlos/Reversed-Call-Of-Duty
+# https://github.com/CoDRev/CoD            ← não encontrado
+# https://github.com/CoDRev/CoD2           ← não encontrado
+# https://github.com/RektInator/t5-client  ← não encontrado
+# https://github.com/iw5x/iw5x-client      ← não encontrado
+
+[GTA]
+https://github.com/citizenfx/fivem
+# https://github.com/GTAmodding/re3        ← removido por DMCA (Take-Two, 2021)
+# https://github.com/re3-space/reVC        ← removido por DMCA (Take-Two, 2021)
+# https://github.com/DK22Pac/open-san-andreas  ← não encontrado
+# https://github.com/Sirenfal/GTA-V-Script-Decompiler  ← não encontrado
+
+[Skate]
+https://github.com/mchughalex/skate3recomp
+
+[Apps ArtCraft]
+https://github.com/storytold/photocraft
+https://github.com/storytold/vectorcraft
+https://github.com/storytold/lightcraft
+https://github.com/storytold/filmcraft
+https://github.com/storytold/pdfcraft
+https://github.com/storytold/effectcraft
+https://github.com/storytold/designcraft
+https://github.com/storytold/figcraft
+https://github.com/storytold/wordcraft
+https://github.com/storytold/deckcraft
+https://github.com/storytold/gridcraft
+
+[Apps e ferramentas]
+https://github.com/leag1234/elixiroffice
+https://github.com/crmne/spotifast
+https://github.com/rea-githu/REA
 
 [Ferramentas Linux]
 https://github.com/caelestia-dots/shell
-# https://github.com/owner/dotfiles
