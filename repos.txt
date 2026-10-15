@@ -17,4 +17,5 @@
 # https://github.com/owner/outro-repo meu-nome-custom
 
 [Ferramentas Linux]
+https://github.com/caelestia-dots/shell
 # https://github.com/owner/dotfiles
