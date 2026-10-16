@@ -2,7 +2,8 @@
 """Espelha repositórios do GitHub como repositórios privados na sua conta.
 
 Para cada entrada do repos.txt: cria o espelho privado se ele faltar, copia
-branches e tags quando a origem muda e organiza o espelho na GitHub List da
+branches e tags quando a origem muda, as releases mais recentes (com os arquivos)
+e os objetos Git LFS do branch padrão, e organiza o espelho na GitHub List da
 categoria (mais topics). Guia completo no README.md.
 """
 
@@ -24,6 +25,7 @@ import tempfile
 import time
 import unicodedata
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections import Counter
 from collections.abc import Callable
@@ -54,6 +56,19 @@ CREATE_PAUSE = 60  # s entre criações
 # a 1ª criação de cada execução só acontece se o repo mais novo da conta tiver mais que isto
 CREATE_COOLDOWN = 60 * 60  # s
 PUSH_BATCH = 500  # refspecs por push: repos com milhares de tags vão em lotes
+
+UPLOADS_URL = "https://uploads.github.com"
+# Releases: só as mais recentes (mais a "latest"), senão repos com nightlies copiariam centenas de GB.
+# Uma release mais antiga sai do espelho quando é superada na origem; se a origem a apagar, ela fica.
+RELEASES_KEEP = 3
+RELEASE_WRITES_PER_RUN = 120  # criações/edições de release + uploads; o excedente fica adiado
+RELEASE_BYTES_PER_RUN = 6 * 1024**3  # bytes baixados+enviados por execução
+MAX_ASSET_SIZE = 2 * 1024**3  # o GitHub não aceita arquivo de release maior que 2 GiB
+RELEASE_WRITE_PAUSE = 1  # s entre escritas (o limite secundário conta criação de conteúdo)
+DOWNLOAD_CHUNK = 1024 * 1024
+# Git LFS: copia os objetos do branch padrão. A conta gratuita tem 10 GiB de LFS no total.
+LFS_MARKER = "refs/mirror/lfs"  # aponta para o commit cujos objetos LFS já estão no espelho
+LFS_MAX_BYTES = 2 * 1024**3
 
 log = logging.getLogger("mirror")
 
@@ -319,6 +334,82 @@ class GitHub:
             return payload["data"]
         raise AssertionError("inalcançável")
 
+    def download(self, url: str, dest: str, *, auth: bool = True) -> int:
+        """Baixa um arquivo de release para dest. Retorna o tamanho.
+
+        O redirect é seguido à mão: o token só vai para a API, nunca para o host
+        assinado do redirect (que, aliás, recusa um segundo Authorization)."""
+        headers = {**self.headers, "Accept": "application/octet-stream"}
+        if not auth:
+            headers.pop("Authorization")
+        opener = urllib.request.build_opener(_NoRedirect)
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                try:
+                    resp = opener.open(urllib.request.Request(url, headers=headers), timeout=HTTP_TIMEOUT)
+                except urllib.error.HTTPError as err:
+                    if err.code not in (301, 302, 303, 307, 308) or not err.headers.get("Location"):
+                        raise
+                    plain = urllib.request.Request(err.headers["Location"], headers={"User-Agent": "git-mirror-control"})
+                    resp = urllib.request.urlopen(plain, timeout=HTTP_TIMEOUT)
+                size = 0
+                with resp, open(dest, "wb") as fh:
+                    while chunk := resp.read(DOWNLOAD_CHUNK):
+                        fh.write(chunk)
+                        size += len(chunk)
+                return size
+            except urllib.error.HTTPError as err:
+                message = _error_message(err.read()) or str(err.reason)
+                wait = _retry_wait(err.code, err.headers, message, attempt)
+                if wait is None or attempt == MAX_RETRIES:
+                    raise ApiError(err.code, f"download → HTTP {err.code}: {message}",
+                                   limited=_rate_limited(err.code, err.headers, message)) from None
+            except (OSError, http.client.HTTPException) as err:
+                if attempt == MAX_RETRIES:
+                    raise ApiError(None, f"download → sem resposta: {getattr(err, 'reason', err)}") from None
+                wait = _backoff(attempt)
+            log.info("  download falhou; nova tentativa em %.0fs", wait)
+            time.sleep(wait)
+        raise AssertionError("inalcançável")
+
+    def upload(self, full_name: str, release_id: int, name: str, path: str, content_type: str) -> dict:
+        """Envia um arquivo para uma release (uploads.github.com)."""
+        where = f"upload {name}"
+        if self.write_block:
+            raise ApiError(None, f"{where} → não enviado: {self.write_block}", limited=True)
+        query = urllib.parse.urlencode({"name": name})
+        url = f"{UPLOADS_URL}/repos/{full_name}/releases/{release_id}/assets?{query}"
+        size = os.path.getsize(path)
+        for attempt in range(MAX_RETRIES + 1):
+            with open(path, "rb") as fh:
+                req = urllib.request.Request(url, data=fh, method="POST", headers={
+                    **self.headers, "Content-Type": content_type or "application/octet-stream",
+                    "Content-Length": str(size),
+                })
+                try:
+                    with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+                        return json.loads(resp.read() or b"{}")
+                except urllib.error.HTTPError as err:
+                    message = _error_message(err.read()) or str(err.reason)
+                    if _rate_limited(err.code, err.headers, message):
+                        self.write_block = "o GitHub barrou escritas temporariamente (rate limit)"
+                        log.warning("%s; o que depender de escrita fica para a próxima execução", self.write_block)
+                        raise ApiError(err.code, f"{where} → HTTP {err.code}: {message}", limited=True) from None
+                    if err.code not in (500, 502, 503, 504) or attempt == MAX_RETRIES:
+                        raise ApiError(err.code, f"{where} → HTTP {err.code}: {message}") from None
+                except (OSError, http.client.HTTPException) as err:
+                    if attempt == MAX_RETRIES:
+                        raise ApiError(None, f"{where} → sem resposta: {getattr(err, 'reason', err)}") from None
+            wait = _backoff(attempt)
+            log.info("  %s falhou; nova tentativa em %.0fs", where, wait)
+            time.sleep(wait)
+        raise AssertionError("inalcançável")
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
 
 # ----------------------------------------------------------------------------- git
 
@@ -442,6 +533,19 @@ def _parse_refs(out: str, *, peeled: bool = False) -> dict[str, str]:
 
 def git_url(full_name: str) -> str:
     return f"{GIT_BASE_URL}/{full_name}.git"
+
+
+def release_body(rel: dict) -> str:
+    footer = f"\n\n---\n*Espelho de {rel['html_url']}*"
+    return (rel.get("body") or "")[:125_000 - len(footer)] + footer  # 125 mil: limite do GitHub
+
+
+def _size(n: int) -> str:
+    for unit in ("B", "KiB", "MiB"):
+        if n < 1024:
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} GiB"
 
 
 # ------------------------------------------------------------------- GitHub Lists
@@ -618,6 +722,7 @@ class Deferred(Exception):
 class Origin:
     ok: bool
     reason: str = ""
+    full_name: str = ""
     url: str = ""
     default_branch: str = ""
     refs: dict[str, str] = field(default_factory=dict)
@@ -644,6 +749,10 @@ class Mirrorer:
         self.tag = "[dry-run] " if dry_run else ""
         self.created = 0
         self.cooldown: str | None = None  # motivo da trava de criação ("" = liberada; None = não conferida)
+        self.deadline = time.monotonic() + TIME_BUDGET  # ajustado pelo cmd_sync ao início da execução
+        self.release_writes = 0
+        self.release_bytes = 0
+        self.lfs_available: bool | None = None
 
     def probe_origin(self, e: Entry) -> Origin:
         try:
@@ -661,7 +770,8 @@ class Mirrorer:
         if info["full_name"].lower() != e.origin.lower():
             log.info("  a origem agora é %s (renomeada ou transferida)", info["full_name"])
 
-        origin = Origin(True, url=git_url(info["full_name"]), default_branch=info.get("default_branch") or "")
+        origin = Origin(True, full_name=info["full_name"], url=git_url(info["full_name"]),
+                        default_branch=info.get("default_branch") or "")
         try:
             origin.refs = self.git.ls_remote(origin.url)
         except GitError as err:
@@ -713,6 +823,14 @@ class Mirrorer:
             result.status = "created"
         else:
             result.status, result.detail = self.update(origin, mirror)
+
+        if origin.ok and mirror is not None:
+            changed, extras = self.sync_extras(e, origin, mirror)
+            if extras:
+                log.info("  %s%s", self.tag, extras)
+            if changed and result.status == "uptodate":
+                result.status = "updated"
+            result.detail = "; ".join(filter(None, [result.detail, extras]))
 
         if mirror is None:  # espelho novo numa simulação
             mirror = {"full_name": f"{self.login}/{e.mirror}", "node_id": None, "topics": []}
@@ -845,6 +963,243 @@ class Mirrorer:
                 ) from None
             raise SyncError(f"não foi possível desligar o Actions do espelho ({err}); "
                             "sem isso os workflows copiados rodariam na conta, então a cópia não foi feita") from None
+
+    # ------------------------------------------------------------ LFS e releases
+
+    def sync_extras(self, e: Entry, origin: Origin, mirror: dict) -> tuple[bool, str]:
+        """Objetos LFS e releases. Falha ou adiamento aqui não desfaz a cópia dos refs:
+        vira aviso no detalhe e a próxima execução retoma de onde parou."""
+        changed, parts = False, []
+        for label, step in (("LFS", self.sync_lfs), ("releases", self.sync_releases)):
+            try:
+                step_changed, detail = step(origin, mirror)
+            except Deferred as err:
+                step_changed, detail = False, f"{label}: {err}; o resto fica para a próxima execução"
+                log.info("  adiado (%s): %s", label, err)
+            except (ApiError, GitError) as err:
+                step_changed, detail = False, f"{label}: falha ({_first_line(str(err))})"
+                log.warning("%s: %s falhou: %s", e.origin, label, err)
+            changed |= step_changed
+            if detail:
+                parts.append(detail)
+        return changed, "; ".join(parts)
+
+    def spend(self, size: int = 0) -> None:
+        """Confere os limites de escrita, de bytes e de tempo antes de gastar mais."""
+        if self.gh.write_block:
+            raise Deferred(self.gh.write_block)
+        if self.release_writes >= RELEASE_WRITES_PER_RUN:
+            raise Deferred(f"limite de {RELEASE_WRITES_PER_RUN} escritas de release/LFS por execução")
+        if self.release_bytes and self.release_bytes + size > RELEASE_BYTES_PER_RUN:
+            raise Deferred(f"limite de {RELEASE_BYTES_PER_RUN // 1024**3} GiB transferidos por execução")
+        if time.monotonic() > self.deadline:
+            raise Deferred("tempo da execução esgotado")
+
+    def write(self, method: str, path: str, body: dict | None = None):
+        """Escrita de release/ref: conta no limite da execução e pausa entre chamadas."""
+        self.spend()
+        try:
+            data, _ = self.gh.request(method, path, body)
+        except ApiError as err:
+            if err.limited:
+                raise Deferred(self.gh.write_block or str(err)) from None
+            raise
+        self.release_writes += 1
+        time.sleep(RELEASE_WRITE_PAUSE)
+        return data
+
+    def sync_lfs(self, origin: Origin, mirror: dict) -> tuple[bool, str]:
+        """Copia os objetos LFS do branch padrão, uma vez por commit (marcado em LFS_MARKER)."""
+        tip = origin.refs.get(f"refs/heads/{origin.default_branch}")
+        if not tip:
+            return False, ""
+        dst = mirror["full_name"]
+        marker_path = f"/repos/{dst}/git/refs/{LFS_MARKER.removeprefix('refs/')}"
+        try:
+            marker, _ = self.gh.request("GET", f"/repos/{dst}/git/ref/{LFS_MARKER.removeprefix('refs/')}")
+            marker_sha = (marker or {}).get("object", {}).get("sha")
+        except ApiError as err:
+            if err.status not in (404, 409):  # 409: espelho ainda vazio
+                raise
+            marker_sha = None
+        if marker_sha == tip:
+            return False, ""
+        if not self.uses_lfs(origin.full_name, tip):
+            detail, changed = "", False
+        elif self.dry_run:
+            return True, "LFS: objetos a copiar"
+        else:
+            detail = self.copy_lfs(origin, mirror, tip)
+            if not self.lfs_available:
+                return False, detail  # sem marcar: quando o git-lfs existir, a cópia acontece
+            changed = detail.endswith("copiados")
+        if not self.dry_run:
+            if marker_sha:
+                self.write("PATCH", marker_path, {"sha": tip, "force": True})
+            else:
+                self.write("POST", f"/repos/{dst}/git/refs", {"ref": LFS_MARKER, "sha": tip})
+        return changed, detail
+
+    def uses_lfs(self, full_name: str, tip: str) -> bool:
+        try:
+            data, _ = self.gh.request("GET", f"/repos/{full_name}/contents/.gitattributes?ref={tip}")
+        except ApiError as err:
+            if err.status == 404:
+                return False
+            raise
+        if not isinstance(data, dict) or not data.get("content"):
+            return False
+        return "filter=lfs" in base64.b64decode(data["content"]).decode("utf-8", "replace")
+
+    def copy_lfs(self, origin: Origin, mirror: dict, tip: str) -> str:
+        if self.lfs_available is None:
+            try:
+                self.git.run("lfs", "version", auth=False)
+                self.lfs_available = True
+            except GitError:
+                self.lfs_available = False
+                log.warning("git-lfs não está instalado: os objetos LFS não serão copiados")
+        if not self.lfs_available:
+            return "LFS: git-lfs ausente, objetos não copiados"
+        self.spend()
+        ref = f"refs/heads/{origin.default_branch}"
+        with tempfile.TemporaryDirectory(prefix="lfs-") as tmp:
+            repo = os.path.join(tmp, "repo.git")
+            g = f"--git-dir={repo}"
+            self.git.run("init", "--bare", "--quiet", repo, auth=False)
+            self.git.run(g, "config", "remote.origin.url", origin.url, auth=False)
+            self.git.run(g, "config", "remote.mirror.url", git_url(mirror["full_name"]), auth=False)
+            # o clone é raso: sem isto o push reclamaria dos objetos de commits antigos
+            self.git.run(g, "config", "lfs.allowincompletepush", "true", auth=False)
+            self.git.run(g, "fetch", "--quiet", "--depth=1", "origin", f"+{ref}:{ref}",
+                         auth=origin.auth, timeout=GIT_TRANSFER_TIMEOUT)
+            listing = json.loads(self.git.run(g, "lfs", "ls-files", "--json", ref, auth=False) or "{}")
+            files = listing.get("files") or []
+            total = sum(f.get("size") or 0 for f in files)
+            if not files:
+                return ""
+            if total > LFS_MAX_BYTES:
+                message = (f"LFS: {total / 1024**3:.1f} GiB passa do limite de "
+                           f"{LFS_MAX_BYTES // 1024**3} GiB por repo; objetos não copiados")
+                log.warning("%s: %s", origin.full_name, message)
+                return message
+            self.spend(2 * total)
+            self.git.run(g, "lfs", "fetch", "origin", ref, auth=origin.auth, timeout=GIT_TRANSFER_TIMEOUT)
+            self.git.run(g, "lfs", "push", "mirror", ref, timeout=GIT_TRANSFER_TIMEOUT)
+        self.release_bytes += 2 * total
+        detail = f"LFS: {len(files)} objeto(s), {_size(total)} copiados"
+        log.info("  %s", detail)
+        return detail
+
+    def sync_releases(self, origin: Origin, mirror: dict) -> tuple[bool, str]:
+        """Copia as RELEASES_KEEP releases mais recentes da origem (e a "latest"), com os arquivos."""
+        src, dst = origin.full_name, mirror["full_name"]
+        newest, _ = self.gh.request("GET", f"/repos/{src}/releases?per_page={RELEASES_KEEP}")
+        try:
+            latest, _ = self.gh.request("GET", f"/repos/{src}/releases/latest")
+        except ApiError as err:
+            if err.status != 404:
+                raise
+            latest = None
+        window = {r["tag_name"]: r for r in newest or [] if not r.get("draft")}
+        if latest:
+            window.setdefault(latest["tag_name"], latest)
+        mine_list, _ = self.gh.request("GET", f"/repos/{dst}/releases?per_page=100")
+        mine = {r["tag_name"]: r for r in mine_list or []}
+        if not window and not mine:
+            return False, ""
+
+        counts: Counter = Counter()
+        notes: list[str] = []
+        latest_tag = latest["tag_name"] if latest else None
+        for tag, rel in sorted(window.items(), key=lambda item: item[1].get("created_at") or ""):
+            if f"refs/tags/{tag}" not in origin.refs:
+                notes.append(f"release {tag} sem tag na origem, ignorada")
+                continue
+            fields = {"name": rel.get("name") or tag, "body": release_body(rel),
+                      "prerelease": bool(rel.get("prerelease"))}
+            target = mine.get(tag)
+            if target is None:
+                counts["criada"] += 1
+                if self.dry_run:
+                    target = {"id": None, "assets": []}
+                else:
+                    target = self.write("POST", f"/repos/{dst}/releases", {
+                        "tag_name": tag, "draft": False,
+                        "make_latest": "true" if tag == latest_tag else "false", **fields,
+                    })
+                    log.info("  %srelease %s criada", self.tag, tag)
+            elif any((target.get(key) or "") != (value or "") for key, value in fields.items()):
+                counts["editada"] += 1
+                if not self.dry_run:
+                    target = self.write("PATCH", f"/repos/{dst}/releases/{target['id']}", fields)
+            self.sync_assets(rel, target, dst, origin, counts, notes)
+
+        for tag, rel in mine.items():  # superadas na origem saem; apagadas na origem ficam
+            if tag in window:
+                continue
+            try:
+                self.gh.request("GET", f"/repos/{src}/releases/tags/{urllib.parse.quote(tag, safe='')}")
+            except ApiError as err:
+                if err.status == 404:
+                    continue
+                raise
+            counts["removida"] += 1
+            if not self.dry_run:
+                self.write("DELETE", f"/repos/{dst}/releases/{rel['id']}")
+                log.info("  release %s removida do espelho (superada na origem)", tag)
+
+        for note in notes:
+            log.info("  %s", note)
+        counts = +counts  # descarta contagens zeradas (arquivo que falhou)
+        if not counts and not notes:
+            return False, ""
+        labels = {"criada": "criada(s)", "editada": "editada(s)", "arquivo": "arquivo(s) enviado(s)",
+                  "removida": "removida(s) (superadas)"}
+        verb = "a fazer: " if self.dry_run else ""
+        parts = [f"{counts[key]} {label}" for key, label in labels.items() if counts[key]]
+        detail = "releases: " + verb + ", ".join(parts + notes)
+        return bool(counts), detail
+
+    def sync_assets(self, rel: dict, target: dict, dst: str, origin: Origin,
+                    counts: Counter, notes: list[str]) -> None:
+        have = {a["name"]: a for a in target.get("assets") or []}
+        for asset in rel.get("assets") or []:
+            if asset.get("state") != "uploaded":
+                continue
+            name, size = asset["name"], asset.get("size") or 0
+            current = have.get(name)
+            if current and current.get("state") == "uploaded" and current.get("size") == size:
+                continue
+            if size > MAX_ASSET_SIZE:
+                notes.append(f"{name} ({_size(size)}) passa de 2 GiB, não copiado")
+                continue
+            counts["arquivo"] += 1
+            if self.dry_run:
+                continue
+            self.spend(2 * size)
+            try:
+                if current:  # envio anterior incompleto ou arquivo trocado na origem
+                    self.write("DELETE", f"/repos/{dst}/releases/assets/{current['id']}")
+                with tempfile.TemporaryDirectory(prefix="asset-") as tmp:
+                    path = os.path.join(tmp, "asset")
+                    url = asset["url"] if origin.auth else asset["browser_download_url"]
+                    got = self.gh.download(url, path, auth=origin.auth)
+                    if got != size:
+                        raise ApiError(None, f"download de {name}: {got} bytes, esperados {size}")
+                    self.spend()
+                    self.gh.upload(dst, target["id"], name, path, asset.get("content_type") or "")
+            except ApiError as err:
+                if err.limited:
+                    raise Deferred(self.gh.write_block or str(err)) from None
+                counts["arquivo"] -= 1
+                notes.append(f"{name}: falha ({_first_line(str(err))})")
+                log.warning("%s: arquivo %s da release %s: %s", origin.full_name, name, rel["tag_name"], err)
+                continue
+            self.release_writes += 1
+            self.release_bytes += 2 * size
+            log.info("  arquivo %s (%s) enviado", name, _size(size))
+            time.sleep(RELEASE_WRITE_PAUSE)
 
     def categorize(self, e: Entry, mirror: dict) -> bool:
         """Aplica topics e a GitHub List da categoria.
@@ -1077,6 +1432,7 @@ def cmd_sync(args, session: Session, all_entries: list[Entry], entries: list[Ent
             lists = None
     mirrorer = Mirrorer(session.gh, session.git, session.login,
                         dry_run=args.dry_run, prune=args.prune, lists=lists)
+    mirrorer.deadline = session.started + TIME_BUDGET
 
     if args.dry_run:
         log.info("SIMULAÇÃO (--dry-run): nada será alterado")

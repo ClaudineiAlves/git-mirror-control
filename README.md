@@ -29,10 +29,13 @@ Se o original for apagado, ficar privado ou sair do ar, o espelho **não é toca
 
 A cópia busca só `refs/heads/*` e `refs/tags/*` num repositório temporário e faz push forçado apenas do que mudou. Um `push --mirror` puro não serve, porque o GitHub rejeita os `refs/pull/*`. Baixar esses refs só gastaria banda.
 
+Depois dos refs, a mesma execução copia as **releases mais recentes** (com os arquivos) e, se a origem usa **Git LFS**, os objetos LFS do branch padrão. Os limites estão em [Limitações](#limitações). Uma falha nessa etapa vira aviso e não desfaz a cópia dos refs.
+
 **Regras de proteção do backup**
 
 - Origem com 404, 451, desativada, vazia ou fora do ar: o espelho **não é tocado** e fica com status 🛡️ protegido, com um aviso no log. Vale também quando você perde acesso à origem.
 - Branches e tags apagados na origem **continuam** no espelho. Só somem com `--prune`.
+- Releases apagadas na origem **continuam** no espelho. Só sai do espelho a release que a origem ainda tem, mas que foi superada por versões mais novas.
 - Tirar uma linha do `repos.txt` só interrompe a sincronização. Nem o espelho nem as Lists são apagados; uma List que ficar vazia gera só um aviso.
 - Um repositório seu com o nome do espelho e descrição diferente de `Mirror of <URL>` nunca é sobrescrito.
 - Falha em um repo não interrompe os outros. Falha de categorização (Lists/topics) vira só um aviso.
@@ -198,8 +201,9 @@ Continuam privados o conteúdo dos espelhos, as Lists e o token. O secret aparec
 
 ## Limitações
 
-- **Só branches e tags.** Issues, pull requests, wiki, releases (com seus arquivos), Discussions e configurações não são copiados.
-- **Git LFS**: vão só os ponteiros, não os arquivos grandes.
+- **Branches, tags, releases recentes e LFS.** Issues, pull requests, wiki, Discussions e configurações não são copiados.
+- **Releases: só as mais recentes.** Cada espelho recebe as 3 releases mais novas da origem mais a marcada como *latest* (`RELEASES_KEEP`), com nome, notas e arquivos. Repos com nightlies teriam centenas de GB se todas fossem copiadas. Quando uma release é superada na origem, ela sai do espelho. Se a origem apagar uma release (ex.: DMCA), a cópia do espelho fica. Arquivos acima de 2 GiB não são aceitos pelo GitHub e ficam de fora. Cada execução faz no máximo 120 escritas de release (`RELEASE_WRITES_PER_RUN`) e transfere até 6 GiB (`RELEASE_BYTES_PER_RUN`), com 1 s entre escritas; o resto fica para a próxima, então a primeira cópia de todas as releases leva algumas execuções.
+- **Git LFS: só o branch padrão.** Se o `.gitattributes` da raiz usa `filter=lfs`, os objetos LFS do commit atual do branch padrão são copiados (até 2 GiB por repo, `LFS_MAX_BYTES`). O espelho guarda em `refs/mirror/lfs` o commit já copiado, para não repetir. Atenção: a conta gratuita tem 10 GiB de LFS no total; o que passar disso faz o push de LFS falhar (aviso no log, sem afetar o resto da cópia).
 - **O cron atrasa.** O `schedule` do Actions pode atrasar em horários de pico e, sob carga alta, uma execução pode ser descartada.
 - **Falhas chegam por e-mail** (notificação padrão do Actions). Nos agendamentos, o aviso vai para quem editou o cron por último.
 - **Estrelas**: as Lists só agrupam repos com estrela. Os espelhos categorizados aparecem com estrela no seu perfil e contam no total.
